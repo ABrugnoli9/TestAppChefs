@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Démo Cloud — Coût &amp; Menus (Bocuse)</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    Babel.registerPreset("react-classic", {
+      presets: [[Babel.availablePresets["react"], { runtime: "classic" }]],
+    });
+  </script>
+  <style>
+    html,body{margin:0;background:#f5f0e8;font-family:Georgia,'Times New Roman',serif;}
+    input,select,button{font-family:inherit;}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react-classic">
+  const { useState, useEffect } = React;
+  const eur = n => (Math.round(n*100)/100).toFixed(2).replace('.', ',') + " €";
+
+  // ====== CONNEXION SUPABASE (votre projet) ======
+  const SUPA_URL = "https://grhsqrjhigymlqzcaffd.supabase.co";
+  const SUPA_KEY = "sb_publishable_CgDfCTPCr9Bu8gI-e-xKJg_wR0gtlTs";
+  const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+  // ---- DONNÉES FICTIVES (produits + fiches restent locales pour la démo) ----
+  const PRODUITS = [
+    { id:"bar",    nom:"Filet de bar",     prix:24.0, unite:"kg" },
+    { id:"dorade", nom:"Filet de dorade",  prix:19.0, unite:"kg" },
+    { id:"beurre", nom:"Beurre",           prix:8.0,  unite:"kg" },
+    { id:"huile",  nom:"Huile d'olive",    prix:9.0,  unite:"L"  },
+    { id:"citron", nom:"Citron",           prix:3.5,  unite:"kg" },
+    { id:"tomate", nom:"Tomate",           prix:2.8,  unite:"kg" },
+    { id:"farine", nom:"Farine",           prix:1.2,  unite:"kg" },
+    { id:"sucre",  nom:"Sucre",            prix:1.5,  unite:"kg" },
+    { id:"oeuf",   nom:"Œuf",              prix:0.25, unite:"pièce" },
+  ];
+  const SOUSFICHES = [{ id:"sf_sauce_vierge", nom:"Sauce vierge",
+    lignes:[ {prod:"tomate",cote:0.05}, {prod:"huile",cote:0.02}, {prod:"citron",cote:0.01} ] }];
+  const FICHES = [
+    { id:"f_tartare", type:"Entrée", nom:"Tartare de dorade",
+      lignes:[ {prod:"dorade",cote:0.12}, {prod:"huile",cote:0.01}, {prod:"citron",cote:0.02} ], sousfiches:[] },
+    { id:"f_bar", type:"Plat", nom:"Filet de bar, sauce vierge",
+      lignes:[ {prod:"bar",cote:0.18}, {prod:"huile",cote:0.02} ], sousfiches:[ {sf:"sf_sauce_vierge",qte:1} ] },
+    { id:"f_tarte", type:"Dessert", nom:"Tarte au citron",
+      lignes:[ {prod:"farine",cote:0.05}, {prod:"beurre",cote:0.03}, {prod:"sucre",cote:0.04}, {prod:"oeuf",cote:1}, {prod:"citron",cote:0.05} ], sousfiches:[] },
+  ];
+  const TYPES = ["Entrée","Plat","Dessert"];
+
+  const coutLignes = (lignes) => lignes.reduce((s,l)=>{ const p=PRODUITS.find(x=>x.id===l.prod); return s+(p?p.prix*l.cote:0); },0);
+  const coutSF = (sf) => coutLignes(sf.lignes);
+  function coutFiche(f){ let c=coutLignes(f.lignes); (f.sousfiches||[]).forEach(r=>{ const sf=SOUSFICHES.find(x=>x.id===r.sf); if(sf)c+=coutSF(sf)*r.qte; }); return c; }
+
+  function App(){
+    const [tab,setTab]   = useState("menu");
+    const [menus,setMenus] = useState([]);
+    const [statut,setStatut] = useState("connexion…");
+
+    async function charger(){
+      setStatut("chargement…");
+      const { data, error } = await sb.from("menus").select("*").order("created_at",{ascending:false});
+      if(error){ setStatut("erreur : "+error.message); return; }
+      setMenus(data||[]); setStatut("connecté ✔");
+    }
+    useEffect(()=>{ charger();
+      const canal = sb.channel("menus-live").on("postgres_changes",{event:"INSERT",schema:"public",table:"menus"},()=>charger()).subscribe();
+      return ()=>sb.removeChannel(canal);
+    },[]);
+
+    async function enregistrer(m){
+      const { error } = await sb.from("menus").insert({ nom:m.nom, data:m });
+      if(error){ alert("Erreur d'enregistrement : "+error.message); return false; }
+      charger(); return true;
+    }
+    async function supprimer(id){
+      await sb.from("menus").delete().eq("id",id); charger();
+    }
+
+    return (
+      <div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",background:"#f5f0e8"}}>
+        <div style={{background:"#1a0a00",padding:"18px 20px",borderBottom:"3px solid #c8982a"}}>
+          <div style={{color:"#c8982a",fontSize:"0.62rem",letterSpacing:"0.3em"}}>DÉMO CLOUD · COÛT &amp; MENUS</div>
+          <div style={{color:"#f5efe0",fontSize:"1.15rem",fontWeight:"bold"}}>Restaurants Bocuse</div>
+          <div style={{marginTop:6,display:"inline-flex",alignItems:"center",gap:5,background:statut==="connecté ✔"?"#123":"#3a2010",color:"#7fd4a8",fontSize:"0.6rem",padding:"3px 8px",borderRadius:20}}>
+            ☁ Registre partagé · {statut}
+          </div>
+        </div>
+
+        <div style={{flex:1,padding:"14px 14px 90px"}}>
+          {tab==="menu"   && <VueMenu onSave={enregistrer} />}
+          {tab==="fiches" && <VueFiches />}
+          {tab==="enr"    && <VueEnregistres menus={menus} onDelete={supprimer} onRefresh={charger} />}
+        </div>
+
+        <div style={{position:"fixed",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",display:"flex",background:"#fff",borderTop:"1px solid #e0d8cc"}}>
+          {[["menu","Menu","🧮"],["fiches","Fiches","📋"],["enr","Registre","☁"]].map(([k,l,e])=>(
+            <button key={k} onClick={()=>setTab(k)} style={{flex:1,border:"none",background:"none",padding:"10px 4px",cursor:"pointer",color:tab===k?"#7b3f00":"#999",borderTop:tab===k?"2px solid #7b3f00":"2px solid transparent"}}>
+              <div style={{fontSize:"1.1rem"}}>{e}</div>
+              <div style={{fontSize:"0.6rem"}}>{l}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  function VueMenu({onSave}){
+    const parType = t => FICHES.filter(f=>f.type===t);
+    const [sel,setSel]   = useState({Entrée:"f_tartare",Plat:"f_bar",Dessert:"f_tarte"});
+    const [coef,setCoef] = useState(3.5);
+    const [nom,setNom]   = useState("Menu du jour");
+    const [flash,setFlash]=useState("");
+    const choisies = TYPES.map(t=>FICHES.find(f=>f.id===sel[t])).filter(Boolean);
+    const total = choisies.reduce((s,f)=>s+coutFiche(f),0);
+    const pv=total*coef, marge=pv-total, foodcost=pv>0?total/pv*100:0;
+
+    return (
+      <div>
+        <H titre="Composer un menu" />
+        {TYPES.map(t=>(
+          <div key={t} style={{marginBottom:10}}>
+            <label style={lbl}>{t}</label>
+            <select value={sel[t]} onChange={e=>setSel({...sel,[t]:e.target.value})} style={inp}>
+              <option value="">— aucun —</option>
+              {parType(t).map(f=><option key={f.id} value={f.id}>{f.nom} ({eur(coutFiche(f))})</option>)}
+            </select>
+          </div>
+        ))}
+        <Card>
+          {choisies.map(f=><Row key={f.id} g={f.type+" · "+f.nom} d={eur(coutFiche(f))} />)}
+          <Row g={<b>Coût matière total</b>} d={<b>{eur(total)}</b>} top />
+        </Card>
+        <div style={{marginTop:12}}>
+          <label style={lbl}>Coefficient : <b>{coef.toFixed(1)}</b></label>
+          <input type="range" min="1.5" max="6" step="0.1" value={coef} onChange={e=>setCoef(parseFloat(e.target.value))} style={{width:"100%"}} />
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}>
+          <Stat label="Prix de vente conseillé" val={eur(pv)} big accent />
+          <Stat label="Marge (matière)" val={eur(marge)} />
+          <Stat label="Coût matière" val={foodcost.toFixed(1).replace('.',',')+" %"} />
+          <Stat label="Nb services" val={String(choisies.length)} />
+        </div>
+        <div style={{marginTop:16,background:"#fff",border:"1px solid #eee",borderRadius:10,padding:12}}>
+          <label style={lbl}>Nom du menu</label>
+          <input value={nom} onChange={e=>setNom(e.target.value)} style={inp} />
+          <button onClick={async()=>{ const ok=await onSave({nom,date:new Date().toLocaleString('fr-FR'),items:choisies.map(f=>f.type+" · "+f.nom),total,pv,coef,foodcost}); if(ok){setFlash("Menu enregistré dans le registre partagé ✔");setTimeout(()=>setFlash(""),2500);} }}
+            style={{...btn,width:"100%",marginTop:10,background:"#7b3f00",color:"#fff",border:"none"}}>☁ Enregistrer dans le registre partagé</button>
+          {flash && <div style={{textAlign:"center",color:"#2d6a4f",fontSize:"0.8rem",marginTop:8}}>{flash}</div>}
+        </div>
+      </div>
+    );
+  }
+
+  function VueFiches(){
+    const [open,setOpen]=useState(null);
+    return (
+      <div>
+        <H titre="Fiches techniques" />
+        {FICHES.map(f=>{
+          const c=coutFiche(f), isOpen=open===f.id;
+          return (
+            <div key={f.id} style={{background:"#fff",border:"1px solid #eee",borderRadius:10,marginBottom:8,overflow:"hidden"}}>
+              <div onClick={()=>setOpen(isOpen?null:f.id)} style={{padding:"12px 14px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div><div style={{fontSize:"0.62rem",color:"#999",textTransform:"uppercase"}}>{f.type}</div><div style={{fontWeight:"bold",color:"#1a0a00"}}>{f.nom}</div></div>
+                <div style={{textAlign:"right"}}><div style={{color:"#7b3f00",fontWeight:"bold"}}>{eur(c)}</div><div style={{fontSize:"0.6rem",color:"#aaa"}}>{isOpen?"▲":"▼"} détail</div></div>
+              </div>
+              {isOpen && <div style={{padding:"0 14px 12px",fontSize:"0.8rem"}}>
+                {f.lignes.map((l,i)=>{ const p=PRODUITS.find(x=>x.id===l.prod); return <Row key={i} g={p?p.nom:l.prod} m={l.cote+" "+(p?p.unite:"")} d={eur(p?p.prix*l.cote:0)} top={i===0} />; })}
+                {(f.sousfiches||[]).map((r,i)=>{ const sf=SOUSFICHES.find(x=>x.id===r.sf); const c2=sf?coutSF(sf)*r.qte:0; return <Row key={"s"+i} g={<span><span style={{background:"#eef3ff",color:"#3760a5",fontSize:"0.6rem",padding:"1px 6px",borderRadius:8,marginRight:4}}>sous-fiche</span>{sf?sf.nom:r.sf}</span>} m={r.qte+" port."} d={eur(c2)} top />; })}
+                <Row g={<b>Coût / portion</b>} d={<b>{eur(c)}</b>} top />
+              </div>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function VueEnregistres({menus,onDelete,onRefresh}){
+    return (
+      <div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <H titre="Registre partagé" />
+          <button onClick={onRefresh} style={{...btn,fontSize:"0.72rem",padding:"5px 10px"}}>↻ Rafraîchir</button>
+        </div>
+        <p style={note}>Ces menus sont <b>communs à tous les appareils</b> connectés à ce registre. Ouvrez cette page sur un autre téléphone : vous verrez les mêmes.</p>
+        {menus.length===0 && <p style={note}>Aucun menu pour l'instant. Composez-en un dans l'onglet « Menu ».</p>}
+        {menus.map(row=>{ const m=row.data||{}; return (
+          <div key={row.id} style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div style={{fontWeight:"bold",color:"#1a0a00"}}>{row.nom}</div>
+              <button onClick={()=>onDelete(row.id)} style={{border:"none",background:"none",color:"#c00",cursor:"pointer"}}>🗑</button>
+            </div>
+            <div style={{fontSize:"0.62rem",color:"#aaa",marginBottom:6}}>{m.date||row.created_at}</div>
+            {(m.items||[]).map((it,j)=><div key={j} style={{fontSize:"0.75rem",color:"#666"}}>· {it}</div>)}
+            <div style={{display:"flex",gap:12,marginTop:8,fontSize:"0.75rem"}}>
+              <span>Matière : <b>{eur(m.total||0)}</b></span>
+              <span>PV : <b style={{color:"#2d6a4f"}}>{eur(m.pv||0)}</b></span>
+              <span>Food cost : <b>{(m.foodcost||0).toFixed(1).replace('.',',')} %</b></span>
+            </div>
+          </div>
+        ); })}
+      </div>
+    );
+  }
+
+  const H = ({titre}) => <h2 style={{fontSize:"1rem",color:"#7b3f00",margin:"4px 0 14px"}}>{titre}</h2>;
+  const Card = ({children}) => <div style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"10px 14px",marginTop:12}}>{children}</div>;
+  const Row = ({g,m,d,top}) => (
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"6px 0",borderTop:top?"1px solid #eee":"none"}}>
+      <span style={{color:"#333",fontSize:"0.82rem",flex:1}}>{g}</span>
+      {m && <span style={{color:"#999",fontSize:"0.72rem"}}>{m}</span>}
+      <span style={{color:"#1a0a00",fontSize:"0.82rem",minWidth:64,textAlign:"right"}}>{d}</span>
+    </div>
+  );
+  const Stat = ({label,val,big,accent}) => (
+    <div style={{background:accent?"#e7f2ec":"#fff",border:"1px solid "+(accent?"#bcdccb":"#eee"),borderRadius:10,padding:"10px 12px"}}>
+      <div style={{fontSize:"0.62rem",color:accent?"#2d6a4f":"#999"}}>{label}</div>
+      <div style={{fontSize:big?"1.3rem":"1.05rem",fontWeight:"bold",color:accent?"#2d6a4f":"#1a0a00"}}>{val}</div>
+    </div>
+  );
+  const lbl = {display:"block",fontSize:"0.68rem",color:"#8a7050",marginBottom:4};
+  const inp = {width:"100%",boxSizing:"border-box",padding:"9px 10px",border:"1px solid #ddd",borderRadius:8,fontSize:"0.85rem",background:"#fff"};
+  const btn = {padding:"9px 12px",borderRadius:8,border:"1px solid #ccc",background:"#fff",cursor:"pointer",fontSize:"0.85rem"};
+  const note = {fontSize:"0.72rem",color:"#8a7050",fontStyle:"italic",background:"#efe8dc",padding:"8px 10px",borderRadius:8};
+
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
