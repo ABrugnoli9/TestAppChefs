@@ -8,6 +8,7 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
   <script>
     Babel.registerPreset("react-classic", {
       presets: [[Babel.availablePresets["react"], { runtime: "classic" }]],
@@ -25,6 +26,7 @@
   const { useState, useEffect } = React;
   const eur = n => (Math.round((n||0)*100)/100).toFixed(2).replace('.', ',') + " €";
   const num = v => parseFloat(String(v).replace(',','.')) || 0;
+  const r6  = n => Math.round(n*1e6)/1e6;
 
   // ====== CONNEXION SUPABASE ======
   const SUPA_URL = "https://grhsqrjhigymlqzcaffd.supabase.co";
@@ -33,34 +35,78 @@
 
   // ====== LISTE DE PRIX FICTIVE (viendra d'Easilys plus tard) ======
   const PRODUITS = [
-    { id:"bar",     nom:"Filet de bar",      prix:24.0, unite:"kg" },
-    { id:"dorade",  nom:"Filet de dorade",   prix:19.0, unite:"kg" },
-    { id:"saumon",  nom:"Saumon frais",      prix:16.0, unite:"kg" },
-    { id:"volaille",nom:"Suprême de volaille",prix:11.5,unite:"kg" },
-    { id:"boeuf",   nom:"Filet de bœuf",     prix:38.0, unite:"kg" },
-    { id:"beurre",  nom:"Beurre",            prix:8.0,  unite:"kg" },
-    { id:"creme",   nom:"Crème liquide",     prix:4.2,  unite:"L"  },
-    { id:"lait",    nom:"Lait",              prix:1.1,  unite:"L"  },
-    { id:"huile",   nom:"Huile d'olive",     prix:9.0,  unite:"L"  },
-    { id:"citron",  nom:"Citron",            prix:3.5,  unite:"kg" },
-    { id:"tomate",  nom:"Tomate",            prix:2.8,  unite:"kg" },
-    { id:"echalote",nom:"Échalote",          prix:3.2,  unite:"kg" },
-    { id:"farine",  nom:"Farine",            prix:1.2,  unite:"kg" },
-    { id:"sucre",   nom:"Sucre",             prix:1.5,  unite:"kg" },
-    { id:"oeuf",    nom:"Œuf",               prix:0.25, unite:"pièce" },
-    { id:"vinblanc",nom:"Vin blanc",         prix:5.0,  unite:"L"  },
+    { id:"bar",     nom:"Filet de bar",       prix:24.0, unite:"kg" },
+    { id:"dorade",  nom:"Filet de dorade",    prix:19.0, unite:"kg" },
+    { id:"saumon",  nom:"Saumon frais",       prix:16.0, unite:"kg" },
+    { id:"volaille",nom:"Suprême de volaille",prix:11.5, unite:"kg" },
+    { id:"boeuf",   nom:"Filet de bœuf",      prix:38.0, unite:"kg" },
+    { id:"beurre",  nom:"Beurre",             prix:8.0,  unite:"kg" },
+    { id:"creme",   nom:"Crème liquide",      prix:4.2,  unite:"L"  },
+    { id:"lait",    nom:"Lait",               prix:1.1,  unite:"L"  },
+    { id:"huile",   nom:"Huile d'olive",      prix:9.0,  unite:"L"  },
+    { id:"citron",  nom:"Citron",             prix:3.5,  unite:"kg" },
+    { id:"tomate",  nom:"Tomate",             prix:2.8,  unite:"kg" },
+    { id:"echalote",nom:"Échalote",           prix:3.2,  unite:"kg" },
+    { id:"farine",  nom:"Farine",             prix:1.2,  unite:"kg" },
+    { id:"sucre",   nom:"Sucre",              prix:1.5,  unite:"kg" },
+    { id:"oeuf",    nom:"Œuf",                prix:0.25, unite:"pièce" },
+    { id:"vinblanc",nom:"Vin blanc",          prix:5.0,  unite:"L"  },
   ];
   const prod = id => PRODUITS.find(p=>p.id===id);
   const TYPES = ["Entrée","Plat","Dessert"];
 
-  // ====== CALCULS ======
+  // ====== MAISONS BOCUSE (liste provisoire — dites-moi la vraie liste) ======
+  const MAISONS = [
+    "Brasserie Le Nord",
+    "Brasserie L'Est",
+    "Brasserie Le Sud",
+    "Brasserie L'Ouest",
+    "Marguerite",
+    "Fond Rose",
+  ];
+
+  // ====== CALCULS (tout est stocké PAR PERSONNE) ======
   const coutLignes = lignes => (lignes||[]).reduce((s,l)=>{ const p=prod(l.prod); return s + (p? p.prix*num(l.cote) : 0); },0);
-  const coutSF = sfRow => coutLignes(sfRow?.data?.lignes);
-  function coutFiche(fRow, sousfiches){
+  const coutSF = sfRow => coutLignes(sfRow?.data?.lignes);                 // coût / personne
+  function coutFiche(fRow, sousfiches){                                    // coût / personne
     if(!fRow||!fRow.data) return 0;
     let c = coutLignes(fRow.data.lignes);
     (fRow.data.sousfiches||[]).forEach(ref=>{ const sf=sousfiches.find(x=>x.id===ref.sf); if(sf) c += coutSF(sf)*num(ref.qte); });
     return c;
+  }
+
+  // Liste des produits d'un menu, en quantité PAR PERSONNE (agrège fiches + sous-fiches)
+  function achatsMenu(choisies, sousfiches){
+    const acc={};
+    const add=(id,q)=>{ acc[id]=(acc[id]||0)+q; };
+    choisies.forEach(f=>{
+      (f.data?.lignes||[]).forEach(l=>add(l.prod,num(l.cote)));
+      (f.data?.sousfiches||[]).forEach(ref=>{ const sf=sousfiches.find(x=>x.id===ref.sf); if(sf)(sf.data?.lignes||[]).forEach(l=>add(l.prod,num(l.cote)*num(ref.qte))); });
+    });
+    return Object.entries(acc).map(([prod,q])=>({prod,q}));
+  }
+  const qfmt = (q,u) => (Math.round(q*1000)/1000).toString().replace('.',',') + " " + (u||"");
+
+  // Export PDF : menu + produits à acheter (production +5%)
+  function exportPDF(row){
+    const m=row.data||{}; const nb=m.couverts||1;
+    const { jsPDF } = window.jspdf;
+    const doc=new jsPDF();
+    let y=16;
+    doc.setFontSize(15); doc.text("Fiche de production", 14, y); y+=8;
+    doc.setFontSize(11);
+    doc.text("Maison : "+(m.maison||"-"), 14, y); y+=6;
+    doc.text("Menu : "+(row.nom||""), 14, y); y+=6;
+    doc.text("Date : "+(m.date||""), 14, y); y+=6;
+    doc.text("Couverts : "+nb, 14, y); y+=10;
+    doc.setFontSize(12); doc.text("Composition du menu", 14, y); y+=6;
+    doc.setFontSize(10);
+    (m.items||[]).forEach(it=>{ doc.text("- "+it, 16, y); y+=5; });
+    y+=6;
+    doc.setFontSize(12); doc.text("Produits a acheter (production +5%)", 14, y); y+=6;
+    doc.setFontSize(10);
+    (m.achats||[]).forEach(a=>{ const p=prod(a.prod); const q=a.q*nb*1.05; doc.text((p?p.nom:a.prod)+" : "+qfmt(q,p?p.unite:""), 16, y); y+=5; if(y>282){doc.addPage(); y=16;} });
+    doc.save("menu_"+String(row.nom||"menu").replace(/[^a-z0-9]+/gi,"_")+".pdf");
   }
 
   function App(){
@@ -91,14 +137,14 @@
         </div>
 
         <div style={{flex:1,padding:"12px 12px 88px"}}>
-          {tab==="menu"    && <VueMenu fiches={fiches} sousfiches={sousfiches} menus={menus} reload={tout} />}
-          {tab==="fiches"  && <VueFiches fiches={fiches} sousfiches={sousfiches} reload={tout} />}
-          {tab==="sf"      && <VueSousFiches sousfiches={sousfiches} reload={tout} />}
-          {tab==="prix"    && <VuePrix />}
+          {tab==="menu"     && <VueMenu fiches={fiches} sousfiches={sousfiches} reload={tout} />}
+          {tab==="recettes" && <VueRecettes fiches={fiches} sousfiches={sousfiches} reload={tout} />}
+          {tab==="registre" && <VueRegistre menus={menus} reload={tout} />}
+          {tab==="prix"     && <VuePrix />}
         </div>
 
         <div style={{position:"fixed",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",display:"flex",background:"#fff",borderTop:"1px solid #e0d8cc"}}>
-          {[["menu","Menu","🧮"],["fiches","Fiches","📋"],["sf","Sous-fiches","🥄"],["prix","Prix","🏷️"]].map(([k,l,e])=>(
+          {[["menu","Menu","🧮"],["recettes","Recettes","📋"],["registre","Registre","☁"],["prix","Liste prix","🏷️"]].map(([k,l,e])=>(
             <button key={k} onClick={()=>setTab(k)} style={{flex:1,border:"none",background:"none",padding:"9px 2px",cursor:"pointer",color:tab===k?"#7b3f00":"#999",borderTop:tab===k?"2px solid #7b3f00":"2px solid transparent"}}>
               <div style={{fontSize:"1.05rem"}}>{e}</div>
               <div style={{fontSize:"0.56rem"}}>{l}</div>
@@ -109,7 +155,18 @@
     );
   }
 
-  // ---------- éditeur de lignes de produits (réutilisé FT + SFT) ----------
+  // ---------- barre de recherche ----------
+  function SearchBar({q,setQ,ph}){
+    return (
+      <div style={{display:"flex",alignItems:"center",background:"#fff",border:"1px solid #ddd",borderRadius:8,padding:"7px 10px",marginBottom:10}}>
+        <span style={{marginRight:6}}>🔍</span>
+        <input value={q} onChange={e=>setQ(e.target.value)} placeholder={ph||"Rechercher…"} style={{border:"none",outline:"none",width:"100%",fontSize:"0.85rem",background:"transparent"}} />
+        {q && <button onClick={()=>setQ("")} style={{border:"none",background:"none",color:"#aaa",cursor:"pointer"}}>✕</button>}
+      </div>
+    );
+  }
+
+  // ---------- éditeur de lignes de produits ----------
   function EditeurLignes({lignes,setLignes}){
     const maj=(i,champ,val)=>setLignes(lignes.map((l,j)=>j===i?{...l,[champ]:val}:l));
     return (
@@ -120,9 +177,9 @@
               <option value="">— produit —</option>
               {PRODUITS.map(p=><option key={p.id} value={p.id}>{p.nom}</option>)}
             </select>
-            <input type="number" step="0.001" value={l.cote} onChange={e=>maj(i,"cote",e.target.value)} placeholder="cote" style={{width:64,padding:"7px 6px",border:"1px solid #ddd",borderRadius:6,textAlign:"right"}} />
-            <span style={{width:30,fontSize:"0.62rem",color:"#999"}}>{p?p.unite:""}</span>
-            <span style={{width:52,fontSize:"0.72rem",textAlign:"right",color:"#1a0a00"}}>{eur(c)}</span>
+            <input type="number" step="0.001" value={l.cote} onChange={e=>maj(i,"cote",e.target.value)} placeholder="qté" style={{width:62,padding:"7px 6px",border:"1px solid #ddd",borderRadius:6,textAlign:"right"}} />
+            <span style={{width:28,fontSize:"0.62rem",color:"#999"}}>{p?p.unite:""}</span>
+            <span style={{width:50,fontSize:"0.72rem",textAlign:"right",color:"#1a0a00"}}>{eur(c)}</span>
             <button onClick={()=>setLignes(lignes.filter((_,j)=>j!==i))} style={{border:"none",background:"none",color:"#c00",cursor:"pointer"}}>✕</button>
           </div>
         );})}
@@ -131,142 +188,199 @@
     );
   }
 
-  // ---------- FICHES : liste + création ----------
-  function VueFiches({fiches,sousfiches,reload}){
-    const [mode,setMode]=useState("liste");
-    if(mode==="new") return <FormFiche sousfiches={sousfiches} onDone={()=>{setMode("liste");reload();}} onCancel={()=>setMode("liste")} />;
+  // ---------- champ "pour X personnes" ----------
+  function ChampPersonnes({n,setN}){
     return (
-      <div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <H titre="Fiches techniques" />
-          <button onClick={()=>setMode("new")} style={{...btn,background:"#7b3f00",color:"#fff",border:"none",fontSize:"0.75rem"}}>+ Nouvelle fiche</button>
+      <div style={{background:"#efe8dc",borderRadius:8,padding:"9px 12px",marginTop:12,display:"flex",alignItems:"center",gap:10}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:"0.74rem",color:"#5a4632",fontWeight:"bold"}}>Recette saisie pour :</div>
+          <div style={{fontSize:"0.62rem",color:"#8a7050",fontStyle:"italic"}}>la base enregistre le coût pour 1 personne</div>
         </div>
-        {fiches.length===0 && <p style={note}>Aucune fiche pour l'instant. Créez-en une avec « + Nouvelle fiche ». Elle sera visible par tous les chefs.</p>}
-        {fiches.map(f=><FicheCard key={f.id} f={f} sousfiches={sousfiches} onDelete={async()=>{ await sb.from("fiches").delete().eq("id",f.id); reload(); }} />)}
+        <input type="number" min="1" step="1" value={n} onChange={e=>setN(e.target.value)} style={{width:56,padding:"7px 6px",border:"1px solid #ccc",borderRadius:6,textAlign:"right",fontSize:"0.95rem"}} />
+        <span style={{fontSize:"0.72rem",color:"#5a4632"}}>pers.</span>
       </div>
     );
   }
-  function FicheCard({f,sousfiches,onDelete}){
+
+  // ================= RECETTES (FT + SFT au même endroit) =================
+  function VueRecettes({fiches,sousfiches,reload}){
+    const [kind,setKind] = useState("ft");    // "ft" | "sft"
+    const [form,setForm] = useState(null);    // null | {edit: row|null}
+    const [q,setQ]       = useState("");
+
+    if(form){
+      if(kind==="ft") return <FormFiche sousfiches={sousfiches} existing={form.edit} onDone={()=>{setForm(null);reload();}} onCancel={()=>setForm(null)} />;
+      return <FormSF existing={form.edit} onDone={()=>{setForm(null);reload();}} onCancel={()=>setForm(null)} />;
+    }
+
+    const liste = (kind==="ft"?fiches:sousfiches).filter(x=>(x.nom||"").toLowerCase().includes(q.toLowerCase()));
+
+    return (
+      <div>
+        {/* sélecteur FT / SFT */}
+        <div style={{display:"flex",background:"#e7ddcd",borderRadius:10,padding:3,marginBottom:12}}>
+          {[["ft","Fiches techniques"],["sft","Sous-fiches"]].map(([k,l])=>(
+            <button key={k} onClick={()=>{setKind(k);setQ("");}} style={{flex:1,border:"none",borderRadius:8,padding:"8px 4px",cursor:"pointer",fontSize:"0.8rem",fontWeight:"bold",background:kind===k?"#7b3f00":"transparent",color:kind===k?"#fff":"#7b3f00"}}>{l}</button>
+          ))}
+        </div>
+
+        <SearchBar q={q} setQ={setQ} ph={kind==="ft"?"Rechercher une fiche…":"Rechercher une sous-fiche…"} />
+
+        <button onClick={()=>setForm({edit:null})} style={{...btn,width:"100%",background:"#7b3f00",color:"#fff",border:"none",marginBottom:12}}>+ {kind==="ft"?"Nouvelle fiche technique":"Nouvelle sous-fiche"}</button>
+
+        {kind==="sft" && <p style={note}>Une sous-fiche est une préparation réutilisable (sauce, garniture…). Souvent saisie pour 10-15 pers., mais stockée par personne.</p>}
+        {liste.length===0 && <p style={note}>Aucun résultat.</p>}
+
+        {kind==="ft"
+          ? liste.map(f=><FicheCard key={f.id} f={f} sousfiches={sousfiches} onEdit={()=>setForm({edit:f})} onDelete={async()=>{ if(confirm("Supprimer cette fiche ?")){ await sb.from("fiches").delete().eq("id",f.id); reload(); } }} />)
+          : liste.map(sf=><SFCard key={sf.id} sf={sf} onEdit={()=>setForm({edit:sf})} onDelete={async()=>{ if(confirm("Supprimer cette sous-fiche ?")){ await sb.from("sous_fiches").delete().eq("id",sf.id); reload(); } }} />)
+        }
+      </div>
+    );
+  }
+
+  function FicheCard({f,sousfiches,onEdit,onDelete}){
     const [open,setOpen]=useState(false);
     const c=coutFiche(f,sousfiches); const d=f.data||{};
     return (
       <div style={{background:"#fff",border:"1px solid #eee",borderRadius:10,marginBottom:8,overflow:"hidden"}}>
-        <div onClick={()=>setOpen(!open)} style={{padding:"11px 13px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div><div style={{fontSize:"0.6rem",color:"#999",textTransform:"uppercase"}}>{f.type}</div><div style={{fontWeight:"bold",color:"#1a0a00"}}>{f.nom}</div></div>
-          <div style={{textAlign:"right"}}><div style={{color:"#7b3f00",fontWeight:"bold"}}>{eur(c)}</div><div style={{fontSize:"0.58rem",color:"#aaa"}}>{open?"▲":"▼"} détail</div></div>
+        <div style={{padding:"11px 13px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div onClick={()=>setOpen(!open)} style={{cursor:"pointer",flex:1}}>
+            <div style={{fontSize:"0.6rem",color:"#999",textTransform:"uppercase"}}>{f.type}</div>
+            <div style={{fontWeight:"bold",color:"#1a0a00"}}>{f.nom}</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{color:"#7b3f00",fontWeight:"bold"}}>{eur(c)}<span style={{fontSize:"0.58rem",color:"#aaa",fontWeight:"normal"}}> /pers.</span></div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:2}}>
+              <button onClick={onEdit} style={miniBtn}>✏️ Éditer</button>
+              <button onClick={()=>setOpen(!open)} style={{...miniBtn,color:"#888"}}>{open?"▲":"▼"}</button>
+            </div>
+          </div>
         </div>
         {open && <div style={{padding:"0 13px 11px",fontSize:"0.78rem"}}>
-          {(d.lignes||[]).map((l,i)=>{ const p=prod(l.prod); return <Row key={i} g={p?p.nom:l.prod} m={l.cote+" "+(p?p.unite:"")} d={eur(p?p.prix*num(l.cote):0)} top={i===0} />; })}
-          {(d.sousfiches||[]).map((ref,i)=>{ const sf=sousfiches.find(x=>x.id===ref.sf); return <Row key={"s"+i} g={<span><span style={sfTag}>sous-fiche</span>{sf?sf.nom:"(supprimée)"}</span>} m={ref.qte+" port."} d={eur(sf?coutSF(sf)*num(ref.qte):0)} top />; })}
-          <Row g={<b>Coût / portion</b>} d={<b>{eur(c)}</b>} top />
+          {(d.lignes||[]).map((l,i)=>{ const p=prod(l.prod); return <Row key={i} g={p?p.nom:l.prod} m={r6(num(l.cote))+" "+(p?p.unite:"")} d={eur(p?p.prix*num(l.cote):0)} top={i===0} />; })}
+          {(d.sousfiches||[]).map((ref,i)=>{ const sf=sousfiches.find(x=>x.id===ref.sf); return <Row key={"s"+i} g={<span><span style={sfTag}>sous-fiche</span>{sf?sf.nom:"(supprimée)"}</span>} m={ref.qte+"×"} d={eur(sf?coutSF(sf)*num(ref.qte):0)} top />; })}
+          <Row g={<b>Coût / personne</b>} d={<b>{eur(c)}</b>} top />
           <button onClick={onDelete} style={{...btn,color:"#c00",fontSize:"0.7rem",marginTop:6,padding:"4px 10px"}}>🗑 Supprimer</button>
         </div>}
       </div>
     );
   }
-  function FormFiche({sousfiches,onDone,onCancel}){
-    const [nom,setNom]=useState("");
-    const [type,setType]=useState("Plat");
-    const [lignes,setLignes]=useState([{prod:"",cote:""}]);
-    const [sfs,setSfs]=useState([]); // {sf, qte}
-    const [busy,setBusy]=useState(false);
-    const coutSFtot = sfs.reduce((s,r)=>{ const sf=sousfiches.find(x=>x.id===r.sf); return s+(sf?coutSF(sf)*num(r.qte):0); },0);
-    const total = coutLignes(lignes)+coutSFtot;
+
+  function SFCard({sf,onEdit,onDelete}){
+    return (
+      <div style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"11px 13px",marginBottom:8}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:"bold",color:"#1a0a00"}}>{sf.nom}</div>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <span style={{color:"#7b3f00",fontWeight:"bold"}}>{eur(coutSF(sf))}<span style={{fontSize:"0.58rem",color:"#aaa",fontWeight:"normal"}}> /pers.</span></span>
+            <button onClick={onEdit} style={miniBtn}>✏️</button>
+            <button onClick={onDelete} style={{border:"none",background:"none",color:"#c00",cursor:"pointer"}}>🗑</button>
+          </div>
+        </div>
+        <div style={{fontSize:"0.7rem",color:"#888",marginTop:4}}>{(sf.data?.lignes||[]).map(l=>{const p=prod(l.prod);return p?p.nom:"";}).filter(Boolean).join(" · ")}</div>
+      </div>
+    );
+  }
+
+  // ---------- Formulaire FICHE TECHNIQUE ----------
+  function FormFiche({sousfiches,existing,onDone,onCancel}){
+    const N0 = existing?.data?.personnes || 1;
+    const [nom,setNom]   = useState(existing?.nom || "");
+    const [type,setType] = useState(existing?.type || "Plat");
+    const [pers,setPers] = useState(String(N0));
+    const [lignes,setLignes] = useState(existing ? (existing.data.lignes||[]).map(l=>({prod:l.prod,cote:String(r6(num(l.cote)*N0))})) : [{prod:"",cote:""}]);
+    const [sfs,setSfs]   = useState(existing ? (existing.data.sousfiches||[]).map(r=>({sf:r.sf,qte:String(r6(num(r.qte)*N0))})) : []);
+    const [busy,setBusy] = useState(false);
+    const N = Math.max(1,num(pers));
+
+    const totalSaisi = coutLignes(lignes) + sfs.reduce((s,r)=>{ const sf=sousfiches.find(x=>x.id===r.sf); return s+(sf?coutSF(sf)*num(r.qte):0); },0);
+    const parPers = totalSaisi / N;
 
     async function save(){
       if(!nom.trim()){ alert("Donnez un nom à la fiche."); return; }
       setBusy(true);
-      const data={ nom, type, portions:1, lignes:lignes.filter(l=>l.prod), sousfiches:sfs.filter(r=>r.sf) };
-      const { error } = await sb.from("fiches").insert({ nom, type, data });
+      const data = { nom, type, personnes:N,
+        lignes: lignes.filter(l=>l.prod).map(l=>({prod:l.prod, cote:r6(num(l.cote)/N)})),
+        sousfiches: sfs.filter(r=>r.sf).map(r=>({sf:r.sf, qte:r6(num(r.qte)/N)})) };
+      const payload = { nom, type, data };
+      const res = existing ? await sb.from("fiches").update(payload).eq("id",existing.id) : await sb.from("fiches").insert(payload);
       setBusy(false);
-      if(error){ alert("Erreur : "+error.message); return; }
+      if(res.error){ alert("Erreur : "+res.error.message); return; }
       onDone();
     }
     return (
       <div>
-        <H titre="Nouvelle fiche technique" />
+        <H titre={existing?"Modifier la fiche":"Nouvelle fiche technique"} />
         <label style={lbl}>Nom de la fiche</label>
         <input value={nom} onChange={e=>setNom(e.target.value)} placeholder="Ex : Filet de bar rôti" style={inp} />
         <label style={{...lbl,marginTop:10}}>Catégorie</label>
         <select value={type} onChange={e=>setType(e.target.value)} style={inp}>{TYPES.map(t=><option key={t}>{t}</option>)}</select>
 
-        <div style={sec}>Produits</div>
+        <ChampPersonnes n={pers} setN={setPers} />
+
+        <div style={sec}>Produits (quantités pour {N} pers.)</div>
         <EditeurLignes lignes={lignes} setLignes={setLignes} />
 
         <div style={sec}>Sous-fiches (facultatif)</div>
-        {sousfiches.length===0 && <p style={note}>Aucune sous-fiche disponible. Créez-en dans l'onglet « Sous-fiches » pour pouvoir les ajouter ici.</p>}
+        {sousfiches.length===0 && <p style={note}>Aucune sous-fiche disponible. Créez-en d'abord dans « Sous-fiches ».</p>}
         {sfs.map((r,i)=>(
           <div key={i} style={{display:"flex",gap:6,alignItems:"center",marginBottom:6}}>
             <select value={r.sf} onChange={e=>setSfs(sfs.map((x,j)=>j===i?{...x,sf:e.target.value}:x))} style={{...inp,flex:1,padding:"7px 8px"}}>
               <option value="">— sous-fiche —</option>
-              {sousfiches.map(sf=><option key={sf.id} value={sf.id}>{sf.nom} ({eur(coutSF(sf))})</option>)}
+              {sousfiches.map(sf=><option key={sf.id} value={sf.id}>{sf.nom} ({eur(coutSF(sf))}/pers.)</option>)}
             </select>
             <input type="number" step="0.1" value={r.qte} onChange={e=>setSfs(sfs.map((x,j)=>j===i?{...x,qte:e.target.value}:x))} placeholder="qté" style={{width:56,padding:"7px 6px",border:"1px solid #ddd",borderRadius:6,textAlign:"right"}} />
             <button onClick={()=>setSfs(sfs.filter((_,j)=>j!==i))} style={{border:"none",background:"none",color:"#c00",cursor:"pointer"}}>✕</button>
           </div>
         ))}
-        {sousfiches.length>0 && <button onClick={()=>setSfs([...sfs,{sf:"",qte:1}])} style={{...btn,fontSize:"0.72rem",padding:"5px 10px"}}>+ ajouter une sous-fiche</button>}
+        {sousfiches.length>0 && <button onClick={()=>setSfs([...sfs,{sf:"",qte:N}])} style={{...btn,fontSize:"0.72rem",padding:"5px 10px"}}>+ ajouter une sous-fiche</button>}
 
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#1a0a00",color:"#f5efe0",borderRadius:10,padding:"11px 14px",marginTop:14}}>
-          <span style={{fontSize:"0.8rem"}}>Coût matière / portion</span><span style={{fontSize:"1.15rem",fontWeight:"bold",color:"#e0b060"}}>{eur(total)}</span>
+        <div style={{background:"#1a0a00",color:"#f5efe0",borderRadius:10,padding:"11px 14px",marginTop:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:"0.76rem"}}>Coût pour {N} pers.</span><span style={{fontSize:"0.95rem"}}>{eur(totalSaisi)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}><span style={{fontSize:"0.8rem",fontWeight:"bold"}}>Coût / personne</span><span style={{fontSize:"1.2rem",fontWeight:"bold",color:"#e0b060"}}>{eur(parPers)}</span></div>
         </div>
 
         <div style={{display:"flex",gap:8,marginTop:12}}>
           <button onClick={onCancel} style={{...btn,flex:1}}>Annuler</button>
-          <button onClick={save} disabled={busy} style={{...btn,flex:2,background:"#7b3f00",color:"#fff",border:"none"}}>{busy?"…":"☁ Enregistrer la fiche"}</button>
+          <button onClick={save} disabled={busy} style={{...btn,flex:2,background:"#7b3f00",color:"#fff",border:"none"}}>{busy?"…":"☁ Enregistrer"}</button>
         </div>
       </div>
     );
   }
 
-  // ---------- SOUS-FICHES : liste + création ----------
-  function VueSousFiches({sousfiches,reload}){
-    const [mode,setMode]=useState("liste");
-    if(mode==="new") return <FormSF onDone={()=>{setMode("liste");reload();}} onCancel={()=>setMode("liste")} />;
-    return (
-      <div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <H titre="Sous-fiches techniques" />
-          <button onClick={()=>setMode("new")} style={{...btn,background:"#7b3f00",color:"#fff",border:"none",fontSize:"0.75rem"}}>+ Nouvelle</button>
-        </div>
-        <p style={note}>Une sous-fiche est une préparation réutilisable (sauce, garniture…) qu'on ajoute ensuite dans les fiches.</p>
-        {sousfiches.map(sf=>(
-          <div key={sf.id} style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"11px 13px",marginBottom:8}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontWeight:"bold",color:"#1a0a00"}}>{sf.nom}</div>
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{color:"#7b3f00",fontWeight:"bold"}}>{eur(coutSF(sf))}</span>
-                <button onClick={async()=>{ await sb.from("sous_fiches").delete().eq("id",sf.id); reload(); }} style={{border:"none",background:"none",color:"#c00",cursor:"pointer"}}>🗑</button>
-              </div>
-            </div>
-            <div style={{fontSize:"0.7rem",color:"#888",marginTop:4}}>{(sf.data?.lignes||[]).map(l=>{const p=prod(l.prod);return p?p.nom+" ("+l.cote+" "+p.unite+")":"";}).filter(Boolean).join(" · ")}</div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  function FormSF({onDone,onCancel}){
-    const [nom,setNom]=useState("");
-    const [lignes,setLignes]=useState([{prod:"",cote:""}]);
-    const [busy,setBusy]=useState(false);
-    const total=coutLignes(lignes);
+  // ---------- Formulaire SOUS-FICHE ----------
+  function FormSF({existing,onDone,onCancel}){
+    const N0 = existing?.data?.personnes || 10;
+    const [nom,setNom]   = useState(existing?.nom || "");
+    const [pers,setPers] = useState(String(N0));
+    const [lignes,setLignes] = useState(existing ? (existing.data.lignes||[]).map(l=>({prod:l.prod,cote:String(r6(num(l.cote)*N0))})) : [{prod:"",cote:""}]);
+    const [busy,setBusy] = useState(false);
+    const N = Math.max(1,num(pers));
+    const totalSaisi = coutLignes(lignes);
+    const parPers = totalSaisi / N;
+
     async function save(){
       if(!nom.trim()){ alert("Donnez un nom à la sous-fiche."); return; }
       setBusy(true);
-      const { error } = await sb.from("sous_fiches").insert({ nom, data:{ nom, lignes:lignes.filter(l=>l.prod) } });
+      const data = { nom, personnes:N, lignes: lignes.filter(l=>l.prod).map(l=>({prod:l.prod, cote:r6(num(l.cote)/N)})) };
+      const payload = { nom, data };
+      const res = existing ? await sb.from("sous_fiches").update(payload).eq("id",existing.id) : await sb.from("sous_fiches").insert(payload);
       setBusy(false);
-      if(error){ alert("Erreur : "+error.message); return; }
+      if(res.error){ alert("Erreur : "+res.error.message); return; }
       onDone();
     }
     return (
       <div>
-        <H titre="Nouvelle sous-fiche" />
-        <label style={lbl}>Nom (ex : Sauce vierge)</label>
+        <H titre={existing?"Modifier la sous-fiche":"Nouvelle sous-fiche"} />
+        <label style={lbl}>Nom (ex : Beurre blanc)</label>
         <input value={nom} onChange={e=>setNom(e.target.value)} style={inp} />
-        <div style={sec}>Produits</div>
+        <ChampPersonnes n={pers} setN={setPers} />
+        <div style={sec}>Produits (quantités pour {N} pers.)</div>
         <EditeurLignes lignes={lignes} setLignes={setLignes} />
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#1a0a00",color:"#f5efe0",borderRadius:10,padding:"11px 14px",marginTop:14}}>
-          <span style={{fontSize:"0.8rem"}}>Coût de la sous-fiche</span><span style={{fontSize:"1.15rem",fontWeight:"bold",color:"#e0b060"}}>{eur(total)}</span>
+        <div style={{background:"#1a0a00",color:"#f5efe0",borderRadius:10,padding:"11px 14px",marginTop:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:"0.76rem"}}>Coût pour {N} pers.</span><span style={{fontSize:"0.95rem"}}>{eur(totalSaisi)}</span></div>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:4}}><span style={{fontSize:"0.8rem",fontWeight:"bold"}}>Coût / personne</span><span style={{fontSize:"1.2rem",fontWeight:"bold",color:"#e0b060"}}>{eur(parPers)}</span></div>
         </div>
         <div style={{display:"flex",gap:8,marginTop:12}}>
           <button onClick={onCancel} style={{...btn,flex:1}}>Annuler</button>
@@ -276,57 +390,116 @@
     );
   }
 
-  // ---------- PRIX ----------
-  function VuePrix(){
+  // ================= REGISTRE (section à part) =================
+  function VueRegistre({menus,reload}){
+    const [q,setQ]=useState("");
+    const liste = menus.filter(m=>((m.nom||"")+" "+((m.data&&m.data.maison)||"")).toLowerCase().includes(q.toLowerCase()));
     return (
       <div>
-        <H titre="Liste de prix (fictive)" />
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <H titre="Registre des menus" />
+          <button onClick={reload} style={{...btn,fontSize:"0.72rem",padding:"5px 10px"}}>↻</button>
+        </div>
+        <p style={note}>Tous les menus enregistrés, communs à tous les chefs.</p>
+        <SearchBar q={q} setQ={setQ} ph="Rechercher un menu…" />
+        {liste.length===0 && <p style={note}>Aucun menu.</p>}
+        {liste.map(row=><MenuCard key={row.id} row={row} onDelete={async()=>{ if(confirm("Supprimer ce menu ?")){ await sb.from("menus").delete().eq("id",row.id); reload(); } }} />)}
+      </div>
+    );
+  }
+
+  function MenuCard({row,onDelete}){
+    const [open,setOpen]=useState(false);
+    const m=row.data||{}; const nb=m.couverts||1;
+    return (
+      <div style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"11px 13px",marginBottom:8}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontWeight:"bold",color:"#1a0a00"}}>{row.nom}</div>
+          <button onClick={onDelete} style={{border:"none",background:"none",color:"#c00",cursor:"pointer"}}>🗑</button>
+        </div>
+        <div style={{fontSize:"0.68rem",color:"#7b3f00",fontWeight:"bold",marginTop:1}}>🏠 {m.maison||"—"} · {nb} couverts</div>
+        <div style={{fontSize:"0.6rem",color:"#aaa",marginBottom:5}}>{m.date||row.created_at}</div>
+        {(m.items||[]).map((it,j)=><div key={j} style={{fontSize:"0.74rem",color:"#666"}}>· {it}</div>)}
+        <div style={{display:"flex",gap:12,marginTop:7,fontSize:"0.74rem"}}>
+          <span>Matière : <b>{eur(m.total)}</b></span>
+          <span>PV : <b style={{color:"#2d6a4f"}}>{eur(m.pv)}</b></span>
+          <span>FC : <b>{(m.foodcost||0).toFixed(1).replace('.',',')} %</b></span>
+        </div>
+        <div style={{display:"flex",gap:8,marginTop:9}}>
+          <button onClick={()=>setOpen(!open)} style={{...btn,flex:1,fontSize:"0.72rem",padding:"6px 8px"}}>{open?"▲ Masquer":"🛒 Produits à acheter"}</button>
+          <button onClick={()=>exportPDF(row)} style={{...btn,flex:1,fontSize:"0.72rem",padding:"6px 8px",background:"#1a0a00",color:"#e0b060",border:"none"}}>🧾 Export PDF</button>
+        </div>
+        {open && <div style={{marginTop:8,borderTop:"1px solid #eee",paddingTop:8}}>
+          <div style={{fontSize:"0.66rem",color:"#8a7050",marginBottom:6}}>Pour <b>{nb}</b> clients — quantités <b>production +5 %</b> :</div>
+          {!m.achats && <p style={note}>Détail indisponible (menu créé avant cette fonction).</p>}
+          {(m.achats||[]).map((a,i)=>{ const p=prod(a.prod); const q=a.q*nb*1.05; return <Row key={i} g={p?p.nom:a.prod} d={qfmt(q,p?p.unite:"")} top={i===0} />; })}
+        </div>}
+      </div>
+    );
+  }
+
+  // ================= LISTE DE PRIX =================
+  function VuePrix(){
+    const [q,setQ]=useState("");
+    const liste = PRODUITS.filter(p=>p.nom.toLowerCase().includes(q.toLowerCase()));
+    return (
+      <div>
+        <H titre="Liste de prix" />
         <p style={note}>Base fictive pour la démo. Dans la version finale, elle viendra de votre <b>export Easilys</b>.</p>
-        {PRODUITS.map(p=>(
+        <SearchBar q={q} setQ={setQ} ph="Rechercher un produit…" />
+        {liste.map(p=>(
           <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"8px 12px",marginBottom:5}}>
             <span style={{fontSize:"0.85rem",color:"#1a0a00"}}>{p.nom}</span>
             <span style={{fontSize:"0.82rem",color:"#7b3f00",fontWeight:"bold"}}>{eur(p.prix)} <span style={{color:"#aaa",fontWeight:"normal",fontSize:"0.7rem"}}>/ {p.unite}</span></span>
           </div>
         ))}
+        {liste.length===0 && <p style={note}>Aucun produit trouvé.</p>}
       </div>
     );
   }
 
-  // ---------- MENU ----------
-  function VueMenu({fiches,sousfiches,menus,reload}){
+  // ================= MENU =================
+  function VueMenu({fiches,sousfiches,reload}){
     const parType = t => fiches.filter(f=>f.type===t);
     const [sel,setSel]=useState({});
     const [coef,setCoef]=useState(3.5);
     const [nom,setNom]=useState("Menu du jour");
+    const [maison,setMaison]=useState(MAISONS[0]);
+    const [couverts,setCouverts]=useState("10");
     const [flash,setFlash]=useState("");
+    const nb = Math.max(1,Math.round(num(couverts)));
     const choisies = TYPES.map(t=>fiches.find(f=>f.id===sel[t])).filter(Boolean);
     const total = choisies.reduce((s,f)=>s+coutFiche(f,sousfiches),0);
     const pv=total*coef, marge=pv-total, foodcost=pv>0?total/pv*100:0;
 
     async function save(){
       if(choisies.length===0){ alert("Choisissez au moins une fiche."); return; }
-      const m={nom,date:new Date().toLocaleString('fr-FR'),items:choisies.map(f=>f.type+" · "+f.nom),total,pv,coef,foodcost};
+      const m={nom,maison,couverts:nb,date:new Date().toLocaleString('fr-FR'),items:choisies.map(f=>f.type+" · "+f.nom),total,pv,coef,foodcost,achats:achatsMenu(choisies,sousfiches)};
       const { error } = await sb.from("menus").insert({ nom, data:m });
       if(error){ alert("Erreur : "+error.message); return; }
-      setFlash("Menu enregistré dans le registre partagé ✔"); setTimeout(()=>setFlash(""),2500); reload();
+      setFlash("Menu enregistré dans le registre ✔"); setTimeout(()=>setFlash(""),2500); reload();
     }
 
     return (
       <div>
         <H titre="Composer un menu" />
-        {fiches.length===0 && <p style={note}>Aucune fiche disponible. Créez d'abord des fiches dans l'onglet « Fiches ».</p>}
+        <div style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"9px 12px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
+          <label style={{...lbl,marginBottom:0,flex:1}}>Nombre de couverts (clients)</label>
+          <input type="number" min="1" step="1" value={couverts} onChange={e=>setCouverts(e.target.value)} style={{width:72,padding:"7px 8px",border:"1px solid #ddd",borderRadius:6,textAlign:"right",fontSize:"0.95rem"}} />
+        </div>
+        {fiches.length===0 && <p style={note}>Aucune fiche disponible. Créez d'abord des fiches dans l'onglet « Recettes ».</p>}
         {TYPES.map(t=>(
           <div key={t} style={{marginBottom:9}}>
             <label style={lbl}>{t}</label>
             <select value={sel[t]||""} onChange={e=>setSel({...sel,[t]:e.target.value})} style={inp}>
               <option value="">— aucun —</option>
-              {parType(t).map(f=><option key={f.id} value={f.id}>{f.nom} ({eur(coutFiche(f,sousfiches))})</option>)}
+              {parType(t).map(f=><option key={f.id} value={f.id}>{f.nom} ({eur(coutFiche(f,sousfiches))}/pers.)</option>)}
             </select>
           </div>
         ))}
         {choisies.length>0 && <Card>
           {choisies.map(f=><Row key={f.id} g={f.type+" · "+f.nom} d={eur(coutFiche(f,sousfiches))} />)}
-          <Row g={<b>Coût matière total</b>} d={<b>{eur(total)}</b>} top />
+          <Row g={<b>Coût matière / personne</b>} d={<b>{eur(total)}</b>} top />
         </Card>}
 
         <div style={{marginTop:12}}>
@@ -339,29 +512,21 @@
           <Stat label="Coût matière" val={foodcost.toFixed(1).replace('.',',')+" %"} />
           <Stat label="Nb services" val={String(choisies.length)} />
         </div>
+        {choisies.length>0 && <p style={{fontSize:"0.72rem",color:"#8a7050",textAlign:"center",margin:"8px 0 0"}}>Pour <b>{nb}</b> couverts → matière <b>{eur(total*nb)}</b> · vente <b>{eur(pv*nb)}</b></p>}
 
         <div style={{marginTop:14,background:"#fff",border:"1px solid #eee",borderRadius:10,padding:12}}>
-          <label style={lbl}>Nom du menu</label>
+          <label style={lbl}>Maison</label>
+          <select value={maison} onChange={e=>setMaison(e.target.value)} style={inp}>{MAISONS.map(mm=><option key={mm}>{mm}</option>)}</select>
+          <label style={{...lbl,marginTop:10}}>Nom du menu</label>
           <input value={nom} onChange={e=>setNom(e.target.value)} style={inp} />
-          <button onClick={save} style={{...btn,width:"100%",marginTop:10,background:"#7b3f00",color:"#fff",border:"none"}}>☁ Enregistrer dans le registre partagé</button>
+          <button onClick={save} style={{...btn,width:"100%",marginTop:10,background:"#7b3f00",color:"#fff",border:"none"}}>☁ Enregistrer dans le registre</button>
           {flash && <div style={{textAlign:"center",color:"#2d6a4f",fontSize:"0.8rem",marginTop:8}}>{flash}</div>}
         </div>
-
-        {menus.length>0 && <div style={{marginTop:18}}>
-          <div style={{...sec,borderTop:"none"}}>Registre partagé ({menus.length})</div>
-          {menus.slice(0,8).map(row=>{ const m=row.data||{}; return (
-            <div key={row.id} style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"10px 12px",marginBottom:6}}>
-              <div style={{fontWeight:"bold",color:"#1a0a00",fontSize:"0.9rem"}}>{row.nom}</div>
-              <div style={{fontSize:"0.6rem",color:"#aaa",marginBottom:4}}>{m.date||row.created_at}</div>
-              <div style={{display:"flex",gap:10,fontSize:"0.72rem"}}><span>Matière : <b>{eur(m.total)}</b></span><span>PV : <b style={{color:"#2d6a4f"}}>{eur(m.pv)}</b></span><span>FC : <b>{(m.foodcost||0).toFixed(1).replace('.',',')}%</b></span></div>
-            </div>
-          );})}
-        </div>}
       </div>
     );
   }
 
-  // ---------- petits composants & styles ----------
+  // ---------- composants & styles ----------
   const H = ({titre}) => <h2 style={{fontSize:"1rem",color:"#7b3f00",margin:"4px 0 12px"}}>{titre}</h2>;
   const Card = ({children}) => <div style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"10px 14px",marginTop:10}}>{children}</div>;
   const Row = ({g,m,d,top}) => (
@@ -380,6 +545,7 @@
   const lbl = {display:"block",fontSize:"0.66rem",color:"#8a7050",marginBottom:4};
   const inp = {width:"100%",boxSizing:"border-box",padding:"9px 10px",border:"1px solid #ddd",borderRadius:8,fontSize:"0.85rem",background:"#fff"};
   const btn = {padding:"9px 12px",borderRadius:8,border:"1px solid #ccc",background:"#fff",cursor:"pointer",fontSize:"0.85rem"};
+  const miniBtn = {border:"none",background:"none",color:"#7b3f00",cursor:"pointer",fontSize:"0.66rem",padding:0};
   const note = {fontSize:"0.72rem",color:"#8a7050",fontStyle:"italic",background:"#efe8dc",padding:"8px 10px",borderRadius:8,margin:"4px 0 10px"};
   const sec = {fontSize:"0.64rem",color:"#8a7050",letterSpacing:"0.1em",textTransform:"uppercase",borderTop:"1px solid #e0d8cc",marginTop:14,paddingTop:10,marginBottom:8};
   const sfTag = {background:"#eef3ff",color:"#3760a5",fontSize:"0.58rem",padding:"1px 6px",borderRadius:8,marginRight:4};
