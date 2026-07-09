@@ -75,65 +75,495 @@
   const qfmt = (q,u) => (Math.round(q*1000)/1000).toString().replace('.',',') + " " + (u||"");
 
   // Export PDF A4 soigné : menu + coûts + produits à acheter (production +5%)
-  function exportPDF(row){
-    const m=row.data||{}; const nb=m.couverts||1;
+  //======================================================
+// EXPORT PDF - VERSION PRO
+//======================================================
+function exportPDF(row){
+
+    const m = row.data || {};
+    const nb = m.couverts || 1;
+
     const { jsPDF } = window.jspdf;
-    const doc=new jsPDF({unit:'mm',format:'a4'});
 
-    // Logo en haut à droite (si dispo)
-    try{ if(LOGO_B64) doc.addImage(LOGO_B64,'PNG',174,8,26,26); }catch(e){}
-
-    // Titre (en-tête blanc, sans bande)
-    doc.setTextColor(120,120,120); doc.setFontSize(9); doc.setFont('helvetica','normal');
-    doc.text("RESTAURANTS BOCUSE", 14, 14);
-    doc.setTextColor(26,10,0); doc.setFontSize(18); doc.setFont('helvetica','bold');
-    doc.text("Fiche de production", 14, 23);
-    doc.setDrawColor(228,228,228); doc.setLineWidth(0.3); doc.line(14,30,196,30);
-
-    // Infos menu
-    let y=40;
-    doc.setTextColor(26,10,0); doc.setFontSize(14); doc.setFont('helvetica','bold'); doc.text(row.nom||"Menu", 14, y);
-    y+=8; doc.setFontSize(11); doc.setFont('helvetica','normal');
-    doc.setTextColor(123,63,0); doc.text("Maison : "+(m.maison||"-"), 14, y);
-    doc.setTextColor(40,40,40); doc.setFont('helvetica','bold'); doc.text(nb+" couverts", 196, y, {align:'right'}); doc.setFont('helvetica','normal');
-    y+=6; doc.setFontSize(9); doc.setTextColor(120,120,120); doc.text("Date : "+(m.date||""), 14, y);
-
-    // Bloc coûts / prix de vente
-    y+=9;
-    doc.setFillColor(247,242,232); doc.roundedRect(14,y-4,182,21,2,2,'F');
-    doc.setFontSize(9.5); doc.setTextColor(60,60,60);
-    doc.text("Coût matière : "+eur(m.total)+" / pers.    ("+eur((m.total||0)*nb)+" pour "+nb+" couverts)", 18, y+2);
-    doc.setTextColor(45,106,79); doc.setFont('helvetica','bold');
-    doc.text("Prix de vente conseillé : "+eur(m.pv)+" / pers.    ("+eur((m.pv||0)*nb)+" au total)", 18, y+8);
-    doc.setFont('helvetica','normal'); doc.setTextColor(60,60,60);
-    doc.text("Food cost : "+((m.foodcost||0).toFixed(1).replace('.',','))+" %      Coefficient : "+(m.coef||"-"), 18, y+14);
-    y+=25;
-
-    // Composition
-    doc.setFontSize(12); doc.setTextColor(123,63,0); doc.setFont('helvetica','bold'); doc.text("Composition du menu", 14, y);
-    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(40,40,40);
-    (m.items||[]).forEach(it=>{ y+=6; doc.text("•  "+it, 16, y); });
-
-    // Tableau produits (unité après la quantité si dispo)
-    y+=8;
-    const body=(m.achats||[]).map(a=>{ const p=prod(a.prod); return [ p?p.nom:a.prod, qfmt(a.q*nb*1.05, p?(p.unite||""):"") ]; });
-    doc.autoTable({
-      startY:y,
-      head:[["Produit à acheter","Quantité (production +5 %)"]],
-      body: body.length?body:[["—","—"]],
-      theme:'striped',
-      headStyles:{fillColor:[123,63,0],textColor:[255,255,255],fontSize:10},
-      styles:{fontSize:9,cellPadding:2.5},
-      columnStyles:{1:{halign:'right',cellWidth:55}},
-      margin:{left:14,right:14},
+    const doc = new jsPDF({
+        unit:'mm',
+        format:'a4'
     });
 
-    const ph=doc.internal.pageSize.getHeight();
-    doc.setFontSize(8); doc.setTextColor(150,150,150);
-    doc.text("Restaurants Bocuse · Coût & Menus", 14, ph-8);
+    const PAGE_W = doc.internal.pageSize.getWidth();
+    const PAGE_H = doc.internal.pageSize.getHeight();
 
-    doc.save("menu_"+String(row.nom||"menu").replace(/[^a-z0-9]+/gi,"_")+".pdf");
-  }
+    //--------------------------------------------------
+    // Logo
+    //--------------------------------------------------
+
+    try{
+        if(LOGO_B64)
+            doc.addImage(LOGO_B64,'PNG',170,8,26,26);
+    }catch(e){}
+
+    //--------------------------------------------------
+    // En-tête
+    //--------------------------------------------------
+
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(20);
+    doc.text("FICHE DE PRODUCTION",14,18);
+
+    doc.setFontSize(9);
+    doc.setFont("helvetica","normal");
+    doc.text("Restaurants Bocuse",14,24);
+
+    doc.setLineWidth(.4);
+    doc.line(14,30,196,30);
+
+    //--------------------------------------------------
+    // Bloc Informations
+    //--------------------------------------------------
+
+    let y = 36;
+
+    doc.roundedRect(14,y,182,28,2,2);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica","bold");
+
+    doc.text("Menu",18,y+7);
+    doc.text("Maison",18,y+15);
+    doc.text("Date",18,y+23);
+
+    doc.text("Production",125,y+7);
+    doc.text("Couverts",125,y+15);
+    doc.text("Prévision",125,y+23);
+
+    doc.setFont("helvetica","normal");
+
+    doc.text(row.nom || "-",45,y+7);
+
+    doc.text(
+        m.maison || "-",
+        45,
+        y+15
+    );
+
+    doc.text(
+        m.date || "-",
+        45,
+        y+23
+    );
+
+    doc.setFont("helvetica","bold");
+
+    doc.text(
+        "Cuisine",
+        160,
+        y+7,
+        {align:"center"}
+    );
+
+    doc.text(
+        String(nb),
+        160,
+        y+15,
+        {align:"center"}
+    );
+
+    doc.text(
+        String(Math.ceil(nb*1.05)),
+        160,
+        y+23,
+        {align:"center"}
+    );
+
+    //--------------------------------------------------
+    // Bloc Résumé
+    //--------------------------------------------------
+
+    y += 36;
+
+    doc.roundedRect(14,y,182,26,2,2);
+
+    doc.line(60,y,60,y+26);
+    doc.line(106,y,106,y+26);
+    doc.line(150,y,150,y+26);
+
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(9);
+
+    doc.text("Coût matière",20,y+7);
+    doc.text("Prix conseillé",69,y+7);
+    doc.text("Food Cost",118,y+7);
+    doc.text("Coef.",163,y+7);
+
+    doc.setFontSize(12);
+
+    doc.text(
+        eur(m.total),
+        20,
+        y+18
+    );
+
+    doc.text(
+        eur(m.pv),
+        69,
+        y+18
+    );
+
+    doc.text(
+        (m.foodcost||0).toFixed(1).replace(".",",")+" %",
+        118,
+        y+18
+    );
+
+    doc.text(
+        String(m.coef||"-"),
+        163,
+        y+18
+    );
+
+    //--------------------------------------------------
+    // Composition
+    //--------------------------------------------------
+
+    y += 36;
+
+    doc.setFont("helvetica","bold");
+    doc.setFontSize(12);
+
+    doc.text(
+        "COMPOSITION DU MENU",
+        14,
+        y
+    );
+
+    y += 3;
+
+    doc.line(14,y,196,y);
+
+    y += 7;
+
+    doc.setFont("helvetica","normal");
+    doc.setFontSize(10);
+
+    (m.items||[]).forEach(it=>{
+
+        if(y>250){
+            doc.addPage();
+            y=20;
+        }
+
+        doc.circle(18,y-1,0.7,"F");
+
+        doc.text(
+            it,
+            22,
+            y
+        );
+
+        y += 6;
+
+    });
+
+    //--------------------------------------------------
+    // La PARTIE 2 commence ici...
+    //--------------------------------------------------
+    //--------------------------------------------------
+// PRODUITS A ACHETER
+//--------------------------------------------------
+
+y += 6;
+
+doc.setFont("helvetica","bold");
+doc.setFontSize(12);
+
+doc.text(
+    "PRODUITS A ACHETER",
+    14,
+    y
+);
+
+y += 3;
+doc.line(14,y,196,y);
+
+y += 5;
+
+const achats = (m.achats || []).map(a=>{
+
+    const p = prod(a.prod);
+
+    return{
+        nom : p ? p.nom : a.prod,
+        qte : qfmt(
+            a.q * nb * 1.05,
+            p ? (p.unite || "") : ""
+        )
+    };
+
+});
+
+
+//======================================================
+// PETITE LISTE
+//======================================================
+
+if(achats.length <= 14){
+
+    doc.autoTable({
+
+        startY:y,
+
+        head:[[
+            "Produit",
+            "Quantité"
+        ]],
+
+        body:achats.map(a=>[
+            a.nom,
+            a.qte
+        ]),
+
+        theme:"grid",
+
+        headStyles:{
+            fontStyle:"bold",
+            halign:"center"
+        },
+
+        styles:{
+            fontSize:9,
+            cellPadding:2,
+            lineWidth:.2
+        },
+
+        columnStyles:{
+            1:{
+                halign:"right",
+                cellWidth:38
+            }
+        },
+
+        margin:{
+            left:14,
+            right:14
+        }
+
+    });
+
+}
+
+
+
+//======================================================
+// GRANDE LISTE -> DEUX TABLEAUX
+//======================================================
+
+else{
+
+    const milieu = Math.ceil(achats.length/2);
+
+    const gauche = achats
+        .slice(0,milieu)
+        .map(a=>[
+            a.nom,
+            a.qte
+        ]);
+
+    const droite = achats
+        .slice(milieu)
+        .map(a=>[
+            a.nom,
+            a.qte
+        ]);
+
+
+    doc.autoTable({
+
+        startY:y,
+
+        tableWidth:84,
+
+        margin:{
+            left:14
+        },
+
+        head:[[
+            "Produit",
+            "Qté"
+        ]],
+
+        body:gauche,
+
+        theme:"grid",
+
+        headStyles:{
+            fontStyle:"bold",
+            halign:"center"
+        },
+
+        styles:{
+            fontSize:8,
+            cellPadding:1.8,
+            lineWidth:.2
+        },
+
+        columnStyles:{
+            1:{
+                halign:"right",
+                cellWidth:22
+            }
+        }
+
+    })
+    tableEndY = doc.lastAutoTable.finalY;
+
+
+
+    doc.autoTable({
+
+        startY:y,
+
+        tableWidth:84,
+
+        margin:{
+            left:112
+        },
+
+        head:[[
+            "Produit",
+            "Qté"
+        ]],
+
+        body:droite,
+
+        theme:"grid",
+
+        headStyles:{
+            fontStyle:"bold",
+            halign:"center"
+        },
+
+        styles:{
+            fontSize:8,
+            cellPadding:1.8,
+            lineWidth:.2
+        },
+
+        columnStyles:{
+            1:{
+                halign:"right",
+                cellWidth:22
+            }
+        }
+
+    })
+    tableEndY = doc.lastAutoTable.finalY;
+
+}
+    //--------------------------------------------------
+// Récapitulatif
+//--------------------------------------------------
+
+y = tableEndY + 8;
+
+if (y > 250) {
+    doc.addPage();
+    y = 20;
+}
+
+doc.setFont("helvetica", "bold");
+doc.setFontSize(11);
+
+doc.text("RÉCAPITULATIF", 14, y);
+
+y += 3;
+doc.line(14, y, 196, y);
+
+y += 8;
+
+const nbProduits = achats.length;
+
+doc.setFont("helvetica", "normal");
+doc.setFontSize(9);
+
+doc.text(
+    "Nombre de produits : " + nbProduits,
+    18,
+    y
+);
+
+doc.text(
+    "Production prévue : " + Math.ceil(nb * 1.05) + " portions",
+    100,
+    y
+);
+
+y += 6;
+
+doc.text(
+    "Coût total matière : " + eur((m.total || 0) * nb),
+    18,
+    y
+);
+
+doc.text(
+    "Prix de vente total : " + eur((m.pv || 0) * nb),
+    100,
+    y
+);
+
+
+//--------------------------------------------------
+// Pied de page
+//--------------------------------------------------
+
+const pageCount = doc.getNumberOfPages();
+
+for (let i = 1; i <= pageCount; i++) {
+
+    doc.setPage(i);
+
+    const ph = doc.internal.pageSize.getHeight();
+
+    doc.setDrawColor(180);
+    doc.line(14, ph - 14, 196, ph - 14);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+
+    doc.text(
+        "Restaurants Bocuse",
+        14,
+        ph - 8
+    );
+
+    doc.text(
+        "Généré le " + new Date().toLocaleString("fr-FR"),
+        70,
+        ph - 8
+    );
+
+    doc.text(
+        "Page " + i + " / " + pageCount,
+        196,
+        ph - 8,
+        { align: "right" }
+    );
+
+}
+
+
+//--------------------------------------------------
+// Sauvegarde
+//--------------------------------------------------
+
+const nom = String(row.nom || "menu")
+    .replace(/[^a-z0-9]+/gi, "_");
+
+doc.save("Fiche_Production_" + nom + ".pdf");
+
+}
+
+
 
   // ---- Livre de recettes Bocuse ----
   async function decompress(b64){
@@ -797,3 +1227,5 @@
   </script>
 </body>
 </html>
+
+
