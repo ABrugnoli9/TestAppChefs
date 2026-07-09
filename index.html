@@ -73,6 +73,15 @@
     return Object.entries(acc).map(([prod,q])=>({prod,q}));
   }
   const qfmt = (q,u) => (Math.round(q*1000)/1000).toString().replace('.',',') + " " + (u||"");
+  // Formate la date de service saisie (ex : "2026-07-15T19:30" -> "15/07/2026 à 19h30")
+  const fmtService = s => {
+    if(!s) return "";
+    const [d,t] = String(s).split("T");
+    if(!d) return String(s);
+    const [Y,M,D] = d.split("-");
+    const hm = t ? t.slice(0,5).replace(":","h") : "";
+    return D+"/"+M+"/"+Y + (hm ? " à "+hm : "");
+  };
 
   // Export PDF A4 soigné : menu + coûts + produits à acheter (production +5%)
   //======================================================
@@ -147,7 +156,7 @@ function exportPDF(row){
     );
 
     doc.text(
-        m.date || "-",
+        (m.dateService ? fmtService(m.dateService) + (m.moment ? " - " + m.moment : "") : (m.date || "-")),
         45,
         y+23
     );
@@ -943,6 +952,7 @@ doc.save("Fiche_Production_" + nom + ".pdf");
           <button onClick={onDelete} style={{border:"none",background:"none",color:"#c00",cursor:"pointer"}}>🗑</button>
         </div>
         <div style={{fontSize:"0.68rem",color:"#7b3f00",fontWeight:"bold",marginTop:1}}>🏠 {m.maison||"—"} · {nb} couverts</div>
+        {m.dateService && <div style={{fontSize:"0.66rem",color:"#2d6a4f",fontWeight:"bold",marginTop:1}}>📅 Service : {fmtService(m.dateService)}{m.moment?" · "+m.moment:""}</div>}
         <div style={{fontSize:"0.6rem",color:"#aaa",marginBottom:5}}>{m.date||row.created_at}</div>
         {(m.items||[]).map((it,j)=><div key={j} style={{fontSize:"0.74rem",color:"#666"}}>· {it}</div>)}
         <div style={{display:"flex",gap:12,marginTop:7,fontSize:"0.74rem"}}>
@@ -1130,6 +1140,8 @@ doc.save("Fiche_Production_" + nom + ".pdf");
     const [nom,setNom]=useState("Menu du jour");
     const [maison,setMaison]=useState(MAISONS[0]);
     const [couverts,setCouverts]=useState("10");
+    const [dateService,setDateService]=useState("");
+    const [moment,setMoment]=useState("Midi");
     const [flash,setFlash]=useState("");
     const nb = Math.max(1,Math.round(num(couverts)));
     const setSlot=(t,i,v)=>setSel(s=>({...s,[t]:s[t].map((x,j)=>j===i?v:x)}));
@@ -1141,7 +1153,7 @@ doc.save("Fiche_Production_" + nom + ".pdf");
 
     async function save(){
       if(choisies.length===0){ alert("Choisissez au moins une fiche."); return; }
-      const m={nom,maison,couverts:nb,date:new Date().toLocaleString('fr-FR'),items:choisies.map(f=>f.type+" · "+f.nom),total,pv,coef,foodcost,achats:achatsMenu(choisies,sousfiches)};
+      const m={nom,maison,couverts:nb,dateService,moment,date:new Date().toLocaleString('fr-FR'),items:choisies.map(f=>f.type+" · "+f.nom),total,pv,coef,foodcost,achats:achatsMenu(choisies,sousfiches)};
       const { error } = await sb.from("menus").insert({ nom, data:m });
       if(error){ alert("Erreur : "+error.message); return; }
       setFlash("Menu enregistré dans le registre ✔"); setTimeout(()=>setFlash(""),2500); reload();
@@ -1153,6 +1165,15 @@ doc.save("Fiche_Production_" + nom + ".pdf");
         <div style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"9px 12px",marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
           <label style={{...lbl,marginBottom:0,flex:1}}>Nombre de couverts (clients)</label>
           <input type="number" min="1" step="1" value={couverts} onChange={e=>setCouverts(e.target.value)} style={{width:72,padding:"7px 8px",border:"1px solid #ddd",borderRadius:6,textAlign:"right",fontSize:"0.95rem"}} />
+        </div>
+        <div style={{background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"9px 12px",marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+          <label style={{...lbl,marginBottom:0,flex:1}}>Date du service</label>
+          <input type="date" value={dateService} onChange={e=>setDateService(e.target.value)} style={{padding:"7px 8px",border:"1px solid #ddd",borderRadius:6,fontSize:"0.9rem"}} />
+          <div style={{display:"flex",gap:4}}>
+            {["Midi","Soir"].map(mo=>(
+              <button key={mo} onClick={()=>setMoment(mo)} style={{border:"1px solid "+(moment===mo?"#7b3f00":"#ddd"),background:moment===mo?"#7b3f00":"#fff",color:moment===mo?"#fff":"#7b3f00",borderRadius:6,padding:"6px 14px",cursor:"pointer",fontSize:"0.8rem",fontWeight:"bold"}}>{mo}</button>
+            ))}
+          </div>
         </div>
         {fiches.length===0 && <p style={note}>Aucune fiche disponible. Créez d'abord des fiches dans l'onglet « Recettes ».</p>}
         {TYPES.map(t=>(
@@ -1227,5 +1248,3 @@ doc.save("Fiche_Production_" + nom + ".pdf");
   </script>
 </body>
 </html>
-
-
