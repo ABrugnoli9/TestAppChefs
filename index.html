@@ -598,7 +598,7 @@ doc.save("Fiche_Production_" + nom + ".pdf");
   }
 
   function App(){
-    const [tab,setTab]         = useState("menu");
+    const [tab,setTab]         = useState((typeof window!=="undefined" && window.location.hash==="#livre") ? "livre" : "menu");
     const [sousfiches,setSF]   = useState([]);
     const [fiches,setFiches]   = useState([]);
     const [menus,setMenus]     = useState([]);
@@ -639,7 +639,8 @@ doc.save("Fiche_Production_" + nom + ".pdf");
     return (
       <div style={{maxWidth:480,margin:"0 auto",minHeight:"100vh",display:"flex",flexDirection:"column",background:"#f5f0e8"}}>
         <div style={{background:"#1a0a00",padding:"16px 18px",borderBottom:"3px solid #c8982a"}}>
-          <div style={{color:"#c8982a",fontSize:"0.6rem",letterSpacing:"0.3em"}}>DÉMO CLOUD · COÛT &amp; MENUS</div>
+          <a href="menu-du-jour.html" style={{color:"#c8982a",fontSize:"0.72rem",textDecoration:"none",display:"inline-block",marginBottom:6}}>‹ Accueil</a>
+          <div style={{color:"#c8982a",fontSize:"0.6rem",letterSpacing:"0.3em"}}>MENU GROUPES · COÛT &amp; MENUS</div>
           <div style={{color:"#f5efe0",fontSize:"1.1rem",fontWeight:"bold"}}>Restaurants Bocuse</div>
           <div style={{marginTop:5,display:"inline-flex",alignItems:"center",gap:5,background:"#123",color:"#7fd4a8",fontSize:"0.58rem",padding:"3px 8px",borderRadius:20}}>☁ Registre partagé · {statut}</div>
         </div>
@@ -653,7 +654,7 @@ doc.save("Fiche_Production_" + nom + ".pdf");
         </div>
 
         <div style={{position:"fixed",bottom:0,left:0,right:0,maxWidth:480,margin:"0 auto",display:"flex",background:"#fff",borderTop:"1px solid #e0d8cc"}}>
-          {[["menu","Menu","🧮"],["recettes","Recettes","📋"],["livre","Livre","📖"],["registre","Registre","☁"],["prix","Prix","🏷️"]].map(([k,l,e])=>(
+          {[["menu","Menu","🧮"],["recettes","Recettes","📋"],["registre","Registre","☁"],["prix","Prix","🏷️"]].map(([k,l,e])=>(
             <button key={k} onClick={()=>setTab(k)} style={{flex:1,border:"none",background:"none",padding:"9px 1px",cursor:"pointer",color:tab===k?"#7b3f00":"#999",borderTop:tab===k?"2px solid #7b3f00":"2px solid transparent"}}>
               <div style={{fontSize:"1.02rem"}}>{e}</div>
               <div style={{fontSize:"0.54rem"}}>{l}</div>
@@ -1137,6 +1138,7 @@ doc.save("Fiche_Production_" + nom + ".pdf");
     const parType = t => fiches.filter(f=>f.type===t);
     const [sel,setSel]=useState({"Entrée":[""],"Plat":[""],"Dessert":[""]});
     const [coef,setCoef]=useState(3.5);
+    const [pvManuel,setPvManuel]=useState("");
     const [nom,setNom]=useState("Menu du jour");
     const [maison,setMaison]=useState(MAISONS[0]);
     const [couverts,setCouverts]=useState("10");
@@ -1149,7 +1151,10 @@ doc.save("Fiche_Production_" + nom + ".pdf");
     const removeSlot=(t,i)=>setSel(s=>({...s,[t]:s[t].filter((_,j)=>j!==i)}));
     const choisies = TYPES.flatMap(t=>(sel[t]||[]).map(id=>fiches.find(f=>f.id===id)).filter(Boolean));
     const total = choisies.reduce((s,f)=>s+coutFiche(f,sousfiches),0);
-    const pv=total*coef, marge=pv-total, foodcost=pv>0?total/pv*100:0;
+    const TVA=0.10;                                          // TVA restauration
+    const pv = pvManuel!=="" ? num(pvManuel) : total*coef;   // prix de vente TTC (saisi à la main, sinon auto par coef)
+    const pvHT = pv/(1+TVA);                                 // HT
+    const marge = pvHT-total, foodcost = pvHT>0 ? total/pvHT*100 : 0;   // marge & food cost calculés en HT
 
     async function save(){
       if(choisies.length===0){ alert("Choisissez au moins une fiche."); return; }
@@ -1200,10 +1205,17 @@ doc.save("Fiche_Production_" + nom + ".pdf");
           <label style={lbl}>Coefficient : <b>{coef.toFixed(1)}</b></label>
           <input type="range" min="1.5" max="6" step="0.1" value={coef} onChange={e=>setCoef(parseFloat(e.target.value))} style={{width:"100%"}} />
         </div>
+        <div style={{marginTop:10,background:"#fff",border:"1px solid #eee",borderRadius:10,padding:"9px 12px",display:"flex",alignItems:"center",gap:10}}>
+          <div style={{flex:1}}>
+            <div style={{fontSize:"0.72rem",color:"#5a4632",fontWeight:"bold"}}>Prix de vente (TTC)</div>
+            <div style={{fontSize:"0.6rem",color:"#8a7050",fontStyle:"italic"}}>Vide = auto (coefficient). Marge &amp; food cost en HT (TVA 10&nbsp;%).</div>
+          </div>
+          <input type="number" step="0.01" value={pvManuel} onChange={e=>setPvManuel(e.target.value)} placeholder={eur(total*coef)} style={{width:88,padding:"7px 6px",border:"1px solid #ccc",borderRadius:6,textAlign:"right",fontSize:"0.95rem"}} />
+        </div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginTop:12}}>
-          <Stat label="Prix de vente conseillé" val={eur(pv)} big accent />
-          <Stat label="Marge (matière)" val={eur(marge)} />
-          <Stat label="Coût matière" val={foodcost.toFixed(1).replace('.',',')+" %"} />
+          <Stat label="Prix de vente (TTC)" val={eur(pv)} big accent />
+          <Stat label="Marge (HT)" val={eur(marge)} />
+          <Stat label="Food cost (HT)" val={foodcost.toFixed(1).replace('.',',')+" %"} />
           <Stat label="Nb services" val={String(choisies.length)} />
         </div>
         {choisies.length>0 && <p style={{fontSize:"0.72rem",color:"#8a7050",textAlign:"center",margin:"8px 0 0"}}>Pour <b>{nb}</b> couverts → matière <b>{eur(total*nb)}</b> · vente <b>{eur(pv*nb)}</b></p>}
